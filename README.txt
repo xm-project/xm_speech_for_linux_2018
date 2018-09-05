@@ -1,7 +1,7 @@
 ﻿/*
 *xm_speech for linux 1.0
 *
-*by fanfan
+*by fanfan , Tornado
 */
 
 1.doc目录下存放开发文档等；
