@@ -1,0 +1,1 @@
+/usr/bin/c++  -fPIC   -shared -Wl,-soname,libgtest_main.so -o libgtest_main.so CMakeFiles/gtest_main.dir/src/gtest_main.cc.o  -L/home/tornado/xm_speech_for_linux/src/xm_speech/build/gtest/src -lpthread libgtest.so -lpthread -Wl,-rpath,/home/tornado/xm_speech_for_linux/src/xm_speech/build/gtest/src:/home/tornado/xm_speech_for_linux/src/xm_speech/build/gtest 

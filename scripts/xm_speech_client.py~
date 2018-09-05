@@ -1,0 +1,365 @@
+#!/usr/bin/env python
+#encoding:utf-8
+# -*- coding: utf-8 -*-
+"""
+Created on Sun Jul 24 2016
+
+@author: fanfan
+"""
+# NOTE: this project requires PyAudio because it uses the Microphone class
+
+import time
+import rospy
+from std_msgs.msg import String
+from xm_speech.srv import *     #from...import与import区别在于import直接导入指定的库,而from....import则是从指定的库中导入指定的模块
+import speech_recognition as sr   #import...as则是将import A as B,给予A库一个B的别称,帮助记忆
+from ctypes import *
+import festival as tts
+from lxml import etree
+import threading
+
+import nltk
+import os
+import sys
+
+from nltk import CFG
+from nltk.parse import RecursiveDescentParser
+
+stop_listening = None
+#num = 0
+
+# -----------------------------------------------------------------------------
+# From alsa-lib Git 3fd4ab9be0db7c7430ebd258f2717a976381715d
+# $ grep -rn snd_lib_error_handler_t
+# include/error.h:59:typedef void (*snd_lib_error_handler_t)(const char *file, int line, const char *function, int err, const char *fmt, ...) /* __attribute__ ((format (printf, 5, 6))) */;
+
+# Define our error handler type
+ERROR_HANDLER_FUNC = CFUNCTYPE(None, c_char_p, c_int, c_char_p, c_int, c_char_p)
+
+def py_error_handler(filename, line, function, err, fmt):
+    pass
+
+c_error_handler = ERROR_HANDLER_FUNC(py_error_handler)
+
+asound = cdll.LoadLibrary('libasound.so')
+
+# Set error handler
+asound.snd_lib_error_set_handler(c_error_handler)
+
+# -----------------------------------------------------------------------------
+
+# Python Festival module
+def speak(text):
+    if type(text) == str and len(text) != 0:
+        tts.sayText(text)
+    else:
+        pass
+
+# -----------------------------------------------------------------------------
+
+#建立的文法满足比赛要求即可
+#2016/1
+
+# 处理1/2/3个短句
+# 句式特点：命令句式
+# V NP:find object/person;talk something;grasp object;follow person
+# V NP PP:deliver it to ;find sb/obj in;
+# V NP NP:ask sb question
+# V PP(V P NP):go to bedroom   
+# S句子,V动词,P介词,VP动词词组,PP介宾,NP名词词组,NOM名次性词
+
+#构建语法树
+grammar=CFG.fromstring("""
+S ->Mission1|Mission1 Mission2|Mission1 Mission2 Mission3
+
+Mission1 ->Val VP
+Mission2 ->Val VP
+Mission3 ->Val VP
+
+VP ->V NP|V NP PP|V PP|V NP NP
+NP ->Det Nom|PropN
+Nom ->Adj N|N
+PP ->P NP
+
+Val ->"and"|"then"|
+Det ->"a"|"an"|"the"|"your"|"my"|
+PropN ->"her"|"him"|"me"|"it"
+P ->To|In|For|Of
+Adj ->"waving"
+
+N ->Location|Object|Topic|Person
+V ->Find|Go|Deliver|Talk|Follow|Grasp
+
+
+Location ->"kitchen"|"dining_room"|"bedroom"|"living_room"
+Object ->"cleaning_staff"|"drink"|"snacks"|"food"|"porridge"|"apple"|"pear"
+Person ->"person"
+Topic ->Time|Date|Name|Day|Question
+Time ->"time"
+Date ->"date"|"today"|"tomorrow"
+Name ->"name"|"team"
+Day ->"day"|"week"|"month"
+Question ->"question"
+
+
+Find ->"find"|"look"
+Go ->"go"|"navigate"|"reach"|"get"
+Deliver ->"deliver"|"bring"|"carry"|"take"
+Talk ->"tell"|"say"|"speak"|"ask"|"answer"
+Follow ->"follow"
+Grasp ->"grasp"|"get"|"take"
+
+
+To ->"to"|"into"
+In ->"in"|"from"|"on"|"at"
+Of ->"of"
+For ->"for"
+
+""")
+
+def search(tree):
+    if tree.label()=="S":
+        if len(tree)==1:
+            tr=tree[0]
+            search(tr)
+            
+        elif len(tree)==2:
+            tr=tree[0]
+            search(tr)
+            tr=tree[1]
+            search(tr)
+            
+        elif len(tree)==3:
+            tr=tree[0]
+            search(tr)
+            tr=tree[1]
+            search(tr)
+            tr=tree[2]
+            search(tr)
+#	    
+    if tree.label()=="Mission1"or tree.label()=="Mission2" or tree.label()=="Mission3":
+        if len(tree)==2:
+            tr=tree[1]
+            search(tr)
+#	    
+    if tree.label()=="VP":
+        if len(tree)==2:
+            if tree[0].label()=="V" and tree[1].label()=="NP":
+                tr=tree[0]
+                search(tr)
+                tr=tree[1]
+                search(tr)
+                
+            if tree[0].label()=="V" and tree[1].label()=="PP":
+                tr=tree[0]
+                search(tr)
+                tr=tree[1]
+                search(tr)
+        
+        elif len(tree)==3:
+            if tree[0].label()=="V" and tree[1].label()=="NP" and tree[2].label()=="PP":
+                if len(tree[2])>0:             #先分析介词短语
+                    if tree[2][0].label()=="P":
+                        if len(tree[2][0])>0:
+                            if tree[2][0][0].label()=="To":  #
+                                tr=tree[0]
+                                search(tr)
+                                tr=tree[1]
+                                search(tr)
+                                print("go ")
+                                tr=tree[2]
+                                search(tr)                                
+                            elif tree[2][0][0].label()=="In":  #
+                                print("go ")
+                                tr=tree[2]
+                                search(tr)
+                                tr=tree[0]
+                                search(tr)
+                                tr=tree[1]
+                                search(tr)
+                            else :              #exp：tell the date of today;
+                                tr=tree[0]      #形式为talk topic;忽略修饰
+                                search(tr)
+                                tr=tree[1]
+                                search(tr)
+                                
+                                
+                                 
+                                                  
+            elif tree[0].label()=="V" and tree[1].label()=="NP" and tree[2].label()=="NP": #
+                tr=tree[0]
+                search(tr)
+                tr=tree[2]
+                search(tr)
+		
+    if tree.label()=="NP":
+        if len(tree)==1:
+            tr=tree[0]
+            search(tr)
+        elif len(tree)==2:
+            tr=tree[1]
+            search(tr)
+                		
+    if tree.label()=="PP":
+        if len(tree)==2:
+            tr=tree[1]
+            search(tr)
+                                
+    if tree.label()=="V":
+        if len(tree)>0:
+            if tree[0].label()=="Find":
+                print("find ")
+            if tree[0].label()=="Go":
+                print("go ")
+            if tree[0].label()=="Deliver":
+                print("grasp ")   #grasp没错!理解!
+            if tree[0].label()=="Talk":
+                print("talk ")
+            if tree[0].label()=="Follow":
+                print("follow ")
+            if tree[0].label()=="Grasp":
+                print("grasp ")    
+	    
+    if tree.label()=="PropN":
+        if len(tree)>0:
+            print(tree[0]+" ")
+		
+    if tree.label()=="Nom":
+        if len(tree)==1:
+            tr=tree[0]
+            search(tr)
+        if len(tree)==2:
+            tr=tree[1]
+            search(tr)#先不做形容词
+             
+    if tree.label()=="N":
+        if len(tree)==1:
+            tr=tree[0]
+            search(tr)
+            
+    if tree.label()=="Location":
+        if len(tree)==1:
+            print(tree[0]+" ")
+
+    if tree.label()=="Object":
+        if len(tree)==1:
+            print(tree[0]+" ")
+	
+    if tree.label()=="Person":
+        if len(tree)==1:
+            print(tree[0]+" ")
+	
+    if tree.label()=="Topic":
+        if len(tree)==1:
+            tr=tree[0]
+            search(tr)
+            
+    if tree.label()=="Time":
+        if len(tree)==1:
+            print(tree[0]+" ")
+    if tree.label()=="Date":
+        if len(tree)==1:
+            print(tree[0]+" ")
+    if tree.label()=="Name":
+        if len(tree)==1:
+            print(tree[0]+" ")
+    if tree.label()=="Day":
+        if len(tree)==1:
+            print(tree[0]+" ")
+    if tree.label()=="Question":
+        if len(tree)==1:
+            print(tree[0]+" ")
+
+#------------------------------------------------------------------------------
+# this is called from the background thread
+def callback(recognizer, audio):
+    # received audio data, now we'll recognize it using xunfei Speech Recognition
+    global stop_listening
+    global num
+    audio_wav_data = audio.get_wav_data()
+    # print("audio_len : " + str(len(audio_wav_data))) # audio data length
+    # print("Got it! Now to recognize it...")
+    print("detecting...")
+    if len(audio_wav_data) > 50000:
+        print("pcm_len : " + str(len(audio_wav_data))) # audio data length
+        rospy.wait_for_service('xm_speech')
+        try:
+            xm_speech = rospy.ServiceProxy('xm_speech',XM_SPEECH)
+            resp1 = xm_speech(audio_wav_data)
+	    text = resp1.sr_text
+            if type(text) == str and len(text) != 0:
+                print("recognized : " + text)
+		num = num + 1
+		speak(text)
+        if num>=7:
+		    stop_listening()
+		#sen=text
+		#rd = RecursiveDescentParser(grammar)
+		#t=rd.parse_one(sen.split())
+		#search(t)
+            else:
+                pass
+            #print(len(resp1.sr_text))
+        except rospy.ServiceException, e:
+            print "Service call failed: %s"%e
+    else:
+        pass
+
+'''
+def runiat(req):
+	#"the main function: listen in the background and retain audio"
+    r = sr.Recognizer()
+    m = sr.Microphone(sample_rate=16000,chunk_size = 1024)#此处有坑
+    print("1")
+    running=[True]
+    try:
+        stop_listening = None
+        print("a moment of silence, please...")#紧跟with后面的语句被求值后,返回对象的__enter__()方法被调用,这个方法的返回值将被赋值给as后
+        speak("a moment of silence, please...")#面的变量.当with后面的代码块全部被执行完之后，将调用前面返回对象的__exit__()方法
+	with m as source:
+	    r.adjust_for_ambient_noise(source) # we only need to calibrate once, before we start listening
+        
+	with m as source:
+	    while running[0]:
+	        try:
+		    audio = r.listen(source,1)
+		except Exception:
+		    pass
+		#else:
+		    #if running[0]: self.callback(r, audio)                     					
+        stop_listening = r.listen_in_background(m, callback)
+        # 'stop_listening' is now a function that, when called, stops background listening
+        while True:
+            time.sleep(0.1) # we're still listening even though the main thread is doing other things
+  		            #函数推迟调用线程的运行,可通过参数secs指秒数,表示进程挂起的时间
+    except KeyboardInterrupt:
+        stop_listening() # calling this function requests that the background listener stop listening 
+'''
+#------------------------------------------------------------------------------
+'''
+def xm_speech_clien_server():
+    rospy.init_node('xm_speech_clien_server')
+    s = rospy.Service('xm_speech_clien', XM_SPEECH_CLIENT, runiat)
+    rospy.spin()
+    print "OK."
+'''
+#------------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    r = sr.Recognizer()
+    m = sr.Microphone(sample_rate=16000,chunk_size = 1024)#此处有坑
+    try:
+        global stop_listening
+        print("a moment of silence, please...")#紧跟with后面的语句被求值后,返回对象的__enter__()方法被调用,这个方法的返回值将被赋值给as后
+        speak("a moment of silence, please...")#面的变量.当with后面的代码块全部被执行完之后，将调用前面返回对象的__exit__()方法
+	with m as source:
+	    r.adjust_for_ambient_noise(source) # we only need to calibrate once, before we start listening                 					
+        stop_listening = r.listen_in_background(m, callback,phrase_time_limit=1)
+        # 'stop_listening' is now a function that, when called, stops background listening
+        #while True:
+        #time.sleep(0.1) # we're still listening even though the main thread is doing other things
+  		            #函数推迟调用线程的运行,可通过参数secs指秒数,表示进程挂起的时间
+	
+    except KeyboardInterrupt:
+        stop_listening() # calling this function requests that the background listener stop listening 
+#------------------------------------------------------------------------------

@@ -1,0 +1,4 @@
+<launch>
+<node pkg="xm_speech" type="xm_speech_server" name="xm_speech_server" output="screen" respawn="true"/>
+<node pkg="xm_speech" type="xm_speech_client.py" name="xm_speech_client" output="screen" respawn="true"/>
+</launch>

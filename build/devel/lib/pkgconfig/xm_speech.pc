@@ -1,0 +1,8 @@
+prefix=/home/tornado/xm_speech_for_linux/src/xm_speech/build/devel
+
+Name: xm_speech
+Description: Description of xm_speech
+Version: 0.0.0
+Cflags: -I/home/tornado/xm_speech_for_linux/src/xm_speech/build/devel/include
+Libs: -L/home/tornado/xm_speech_for_linux/src/xm_speech/build/devel/lib 
+Requires: 
